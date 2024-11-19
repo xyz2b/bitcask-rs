@@ -54,14 +54,14 @@ impl Transaction<'_> {
 
     /// 写入数据
     pub fn put(&self, key: Bytes, value: Bytes) -> Result<()> {
-      if key.is_empty() {
-        return Err(Errors::KeyIsEmpty);
-      } 
-      if value.is_empty() {
-        return Err(Errors::ValueIsEmpty);
-      }
+        if key.is_empty() {
+            return Err(Errors::KeyIsEmpty);
+        }
+        if value.is_empty() {
+            return Err(Errors::ValueIsEmpty);
+        }
 
-      let txn_key = match self.txn_write(key) {
+        let txn_key = match self.txn_write(key) {
             Ok(key) => key,
             Err(e) => {
                 return Err(e);
@@ -81,7 +81,8 @@ impl Transaction<'_> {
             }
         };
 
-        self.engine.put(Bytes::from(txn_key.encode()), Bytes::default())
+        self.engine
+            .put(Bytes::from(txn_key.encode()), Bytes::default())
     }
 
     fn txn_write(&self, key: Bytes) -> Result<Key> {
@@ -100,7 +101,7 @@ impl Transaction<'_> {
                     // 所以需要在这里判断下T1是否提交，已提交的事务版本号会从 ACTIVE_TXN 中删除，直接判断在不在其中即可
                     let active_txn = ACTIVE_TXN.read();
                     if !active_txn.contains_key(&key_version.version) {
-                      break;
+                        break;
                     }
                     return Err(Errors::MvccTxnWriteKeyConflictsWithOtherTransactions);
                 }
@@ -134,10 +135,10 @@ impl Transaction<'_> {
             let key_version = decode_key(&enc_key.to_vec());
             if key_version.raw_key.eq(&key.to_vec()) {
                 if self.is_visible(key_version.version) {
-                  if v.is_empty() {
-                    return Err(Errors::KeyNotFound);
-                  }
-                  return Ok(v);
+                    if v.is_empty() {
+                        return Err(Errors::KeyNotFound);
+                    }
+                    return Ok(v);
                 }
             }
         }
@@ -241,7 +242,7 @@ mod tests {
         opts.dir_path = PathBuf::from("/tmp/bitcask-rs-mvcc-put");
         opts.data_file_size = 64 * 1024 * 1024;
         let engine = Engine::open(opts.clone()).expect("failed to open engine");
-       
+
         // 单事务读写
         let txn1 = engine.begin();
         let put_txn1_res1 = txn1.put(Bytes::from("key1"), Bytes::from("1"));
@@ -273,7 +274,10 @@ mod tests {
         // 两个事物未提交前同时写一个key
         let put_txn3_res1 = txn3.put(Bytes::from("key1"), Bytes::from("3"));
         assert!(put_txn3_res1.is_err());
-        assert_eq!(put_txn3_res1.err().unwrap(), Errors::MvccTxnWriteKeyConflictsWithOtherTransactions);
+        assert_eq!(
+            put_txn3_res1.err().unwrap(),
+            Errors::MvccTxnWriteKeyConflictsWithOtherTransactions
+        );
 
         // 未提交事务读不到其事务期间事务提交的写入数据（因为t3事务开启时，t2还没提交，可重复读）
         let commit_txn2_res1 = txn2.commit();
@@ -317,7 +321,7 @@ mod tests {
         assert!(get_txn2_res1.is_ok());
         assert_eq!(get_txn2_res1.unwrap(), Bytes::from("key11"));
 
-        let delete_txn2_res1= txn2.delete(Bytes::from("key1"));
+        let delete_txn2_res1 = txn2.delete(Bytes::from("key1"));
         assert!(delete_txn2_res1.is_ok());
 
         let get_txn2_res2 = txn2.get(Bytes::from("key1"));
@@ -343,17 +347,16 @@ mod tests {
         let commit_txn3_res1 = txn3.commit();
         assert!(commit_txn3_res1.is_ok());
 
-        
         let txn4 = engine.begin();
         let get_txn4_res1 = txn4.get(Bytes::from("key1"));
         assert!(get_txn4_res1.is_err());
         assert_eq!(get_txn4_res1.err().unwrap(), Errors::KeyNotFound);
 
         std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
-      }
+    }
 
-      #[test]
-      fn test_mvcc_rollback() {
+    #[test]
+    fn test_mvcc_rollback() {
         let mut opts = Options::default();
         opts.dir_path = PathBuf::from("/tmp/bitcask-rs-mvcc-rollback");
         opts.data_file_size = 64 * 1024 * 1024;
@@ -374,7 +377,7 @@ mod tests {
         assert!(get_txn2_res1.is_ok());
         assert_eq!(get_txn2_res1.unwrap(), Bytes::from("key11"));
 
-        let delete_txn2_res1= txn2.delete(Bytes::from("key1"));
+        let delete_txn2_res1 = txn2.delete(Bytes::from("key1"));
         assert!(delete_txn2_res1.is_ok());
 
         let put_txn2_res1 = txn2.put(Bytes::from("key2"), Bytes::from("key22"));
@@ -402,7 +405,10 @@ mod tests {
 
         let commit_txn2_res1 = txn2.commit();
         assert!(commit_txn2_res1.is_err());
-        assert_eq!(commit_txn2_res1.err().unwrap(), Errors::MvccCommitActiveTxnIsNotExist);
+        assert_eq!(
+            commit_txn2_res1.err().unwrap(),
+            Errors::MvccCommitActiveTxnIsNotExist
+        );
 
         let get_txn3_res2 = txn3.get(Bytes::from("key1"));
         assert!(get_txn3_res2.is_ok());
@@ -425,5 +431,5 @@ mod tests {
         assert_eq!(get_txn4_res2.unwrap(), Bytes::from("key21"));
 
         std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
-      }
+    }
 }
