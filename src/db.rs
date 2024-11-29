@@ -43,6 +43,7 @@ pub struct Engine {
     lock_file: File,    // 文件锁，保证只能在数据目录上打开一个实例
     bytes_write: Arc<AtomicUsize>, // 累计写入了多少字节
     pub(crate) seq_file_exists: bool, // 事务序列号文件是否存在
+    pub(crate) is_initial: bool, // 是否是第一次初始化该目录
 }
 
 impl Engine {
@@ -53,14 +54,21 @@ impl Engine {
             return Err(e);
         }
 
+        let mut is_initial = false;
         let options: Options = opts.clone();
         // 判断数据目录是否存在，如果不存在的话则创建这个目录
         let dir_path = options.dir_path;
         if !dir_path.is_dir() {
+            is_initial = true;
             if let Err(e) = fs::create_dir_all(dir_path.as_path()) {
                 warn!("create database dir err: {}", e);
                 return Err(Errors::FailedToCreateDatabaseDir);
             }
+        }
+
+        let entries = fs::read_dir(dir_path.clone()).unwrap();
+        if entries.count() == 0 {
+            is_initial = true;
         }
 
         // 判断数据目录是否已经被使用了
@@ -119,6 +127,7 @@ impl Engine {
             lock_file: lock_file,
             bytes_write: Arc::new(AtomicUsize::new(0)),
             seq_file_exists: false,
+            is_initial: is_initial,
         };
 
         // B+ 树不需要从数据文件加载索引
@@ -145,6 +154,10 @@ impl Engine {
             let (exists, seq_no) = engine.load_seq_no();
             engine.seq_no.store(seq_no, Ordering::SeqCst);
             engine.seq_file_exists = exists;
+            
+            // 设置当前活跃文件的偏移
+            let active_file = engine.active_file.write();
+            active_file.set_write_off(active_file.file_size());
         }
 
         Ok(engine)
@@ -165,6 +178,10 @@ impl Engine {
 
         let v = String::from_utf8(record.value).unwrap();
         let seq_no = v.parse::<usize>().unwrap();
+
+        // 加载后删掉，避免追加写入
+        fs::remove_file(seq_no_file_path).unwrap();
+
         (true, seq_no)
     }
 

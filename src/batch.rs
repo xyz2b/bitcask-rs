@@ -26,7 +26,7 @@ pub struct WriteBatch<'a> {
 
 impl Engine {
     pub fn new_write_batch(&self, options: WriteBatchOptions) -> Result<WriteBatch> {
-        if self.options.index_type == IndexType::BPTree && !self.seq_file_exists {
+        if self.options.index_type == IndexType::BPTree && !self.seq_file_exists && !self.is_initial {
             return Err(Errors::UableToUseWriteBatch);
         }
 

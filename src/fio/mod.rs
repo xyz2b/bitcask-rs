@@ -16,6 +16,8 @@ pub trait IOManager: Sync + Send {
     fn write(&self, buf: &[u8]) -> Result<usize>;
     /// 持久化数据
     fn sync(&self) -> Result<()>;
+    /// 获取文件的大小
+    fn size(&self) -> u64;
 }
 
 pub fn new_io_manager(file_name: PathBuf, io_type: IOType) -> Box<dyn IOManager> {

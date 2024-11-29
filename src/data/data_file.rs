@@ -183,6 +183,10 @@ impl DataFile {
     pub fn set_io_manager(&mut self, dir_path: PathBuf, io_type: IOType) {
         self.io_manager = new_io_manager(get_data_file_name(dir_path, self.get_file_id()), io_type);
     }
+
+    pub fn file_size(&self) -> u64 {
+        self.io_manager.size()
+    }
 }
 
 pub fn get_data_file_name(path: PathBuf, file_id: u32) -> PathBuf {

@@ -5,7 +5,7 @@ use log::error;
 use crate::{
     batch::{log_record_key_with_seq, parse_log_record_key, NON_TRANSACTION_SEQ_NO},
     data::{
-        data_file::{get_data_file_name, DataFile, HINT_FILE_NAME, MERGE_FIN_FILE_NAME},
+        data_file::{get_data_file_name, DataFile, HINT_FILE_NAME, MERGE_FIN_FILE_NAME, SEQ_NO_FILE_NAME},
         log_record::{decode_log_record_pos, LogRecord, LogRecordType},
     },
     db::{Engine, FILE_LOCK_NAME},
@@ -206,6 +206,10 @@ pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<()> {
             if filename.ends_with(FILE_LOCK_NAME) {
                 continue;
             }
+            if filename.ends_with(SEQ_NO_FILE_NAME) {
+                continue;
+            }
+
             merge_file_names.push(entry.file_name());
         }
     }
