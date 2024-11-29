@@ -60,6 +60,18 @@ pub enum Errors {
 
   #[error("rollback delete data failed")]
   MvccRollbackDeleteDataFailed,
+
+  #[error("exceed the max batch num")]
+  ExceedMaxBatchNum,
+
+  #[error("merge is in progress")]
+  MergeInProgress,
+
+  #[error("the database directory is used by another process")]
+  DatabaseIsUsing,
+
+  #[error("unable to use wirte batch, seq file not exists")]
+  UableToUseWriteBatch,
 }
 
 pub type Result<T> = result::Result<T, Errors>;

@@ -73,6 +73,7 @@ impl Transaction<'_> {
 
     /// 删除数据
     /// put 一条 value 为空的数据，此限制了用户不能 put value 为空的数据
+    /// TODO: 真正的数据没被删除，需要在commit时候加入一条删除
     pub fn delete(&self, key: Bytes) -> Result<()> {
         let txn_key = match self.txn_write(key) {
             Ok(key) => key,

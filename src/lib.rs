@@ -7,6 +7,8 @@ pub mod options;
 mod util;
 mod iterator;
 mod mvcc;
+mod batch;
+mod merge;
 
 #[cfg(test)]
 mod db_tests;

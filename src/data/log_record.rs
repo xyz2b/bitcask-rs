@@ -1,7 +1,7 @@
 use core::panic;
 
 use bytes::{BufMut, BytesMut};
-use prost::{encode_length_delimiter, length_delimiter_len};
+use prost::{encode_length_delimiter, length_delimiter_len, encoding::encode_varint, encoding::decode_varint};
 
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -11,6 +11,9 @@ pub enum LogRecordType {
 
     // 被删除的数据标识，墓碑值
     DELETE = 2,
+
+    // 标识事务结束的标识
+    TxnFinished = 3,
 }
 
 impl LogRecordType {
@@ -18,9 +21,16 @@ impl LogRecordType {
       match v {
         1 => LogRecordType::NORMAL,
         2 => LogRecordType::DELETE,
+        3 => LogRecordType::TxnFinished,
         _ => panic!("unknown log record type"),
       }
     }
+}
+
+/// 暂存事务数据信息
+pub struct TransactionRecord {
+  pub(crate) record: LogRecord,
+  pub(crate) pos: LogRecordPos,
 }
 
 /// 写入到数据文件的记录
@@ -91,6 +101,36 @@ impl LogRecord {
 pub struct LogRecordPos {
   pub(crate) file_id: u32,
   pub(crate) offset: u64,
+}
+
+impl LogRecordPos {
+    pub fn encode(&self) -> Vec<u8> {
+      let mut buf = BytesMut::new();
+      encode_varint(self.file_id as u64, &mut buf);
+      encode_varint(self.offset, &mut buf);
+      buf.to_vec()
+    }
+}
+
+/// 解码 LogRecordPos
+pub fn decode_log_record_pos(pos: Vec<u8>) -> LogRecordPos {
+  let mut buf = BytesMut::new();
+  buf.put_slice(&pos);
+
+  let fid = match decode_varint(&mut buf) {
+    Ok(fid) => fid,
+    Err(e) => panic!("decode log record pos fid err: {}", e),
+  };
+
+  let offset = match decode_varint(&mut buf) {
+    Ok(offset) => offset,
+    Err(e) => panic!("decode log record pos offset err: {}", e),
+  };
+
+  LogRecordPos {
+    file_id: fid as u32,
+    offset: offset,
+  }
 }
 
 /// 从数据文件中读取的 log_record 信息，包含其 size
