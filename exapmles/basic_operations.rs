@@ -1,6 +1,6 @@
 use bitcask_rs::db;
-use bitcask_rs::options::Options;
 use bitcask_rs::errors::Errors;
+use bitcask_rs::options::Options;
 use bytes::Bytes;
 
 fn main() {

@@ -1,12 +1,16 @@
+pub mod bptree;
 pub mod btree;
 pub mod skiplist;
-pub mod bptree;
 
 use std::path::PathBuf;
 
 use bytes::Bytes;
 
-use crate::{data::log_record::LogRecordPos, errors::Result, options::{IndexType, IteratorOptions}};
+use crate::{
+    data::log_record::LogRecordPos,
+    errors::Result,
+    options::{IndexType, IteratorOptions},
+};
 
 /// 抽象索引接口，后续如果想要接入其他的数据结构，则直接实现这个接口即可
 pub trait Indexer: Sync + Send {

@@ -32,7 +32,11 @@ impl BPTree {
 }
 
 impl Indexer for BPTree {
-    fn put(&self, key: Vec<u8>, pos: crate::data::log_record::LogRecordPos) -> Option<LogRecordPos> {
+    fn put(
+        &self,
+        key: Vec<u8>,
+        pos: crate::data::log_record::LogRecordPos,
+    ) -> Option<LogRecordPos> {
         let mut result = None;
         let tx = self.tree.tx(true).expect("failed to begin tx");
         let bucket = tx.get_bucket(BPTREE_BUCKET_NAME).unwrap();
@@ -183,7 +187,14 @@ mod tests {
         );
         assert!(res2.is_none());
 
-        let res3 = bpt.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 100, size: 11});
+        let res3 = bpt.put(
+            "aa".as_bytes().to_vec(),
+            LogRecordPos {
+                file_id: 1,
+                offset: 100,
+                size: 11,
+            },
+        );
         assert!(res3.is_some());
 
         std::fs::remove_dir_all(dir_path).expect("failed to remove path");
@@ -260,8 +271,6 @@ mod tests {
 
         std::fs::remove_dir_all(dir_path).expect("failed to remove path");
     }
-
-
 
     #[test]
     fn test_bptree_clear() {

@@ -23,7 +23,8 @@ use crate::{
     errors::{Errors, Result},
     index,
     merge::load_merge_files,
-    options::{IOType, IndexType, Options}, util,
+    options::{IOType, IndexType, Options},
+    util,
 };
 
 const INITIAL_FILE_ID: u32 = 0;
@@ -47,10 +48,10 @@ pub struct Engine {
     pub(crate) reclaim_size: Arc<AtomicUsize>, // 累计有多少空间可以 merge 释放
 }
 
-/// 存储引擎相关统计数据 
+/// 存储引擎相关统计数据
 #[derive(Debug)]
 pub struct Stat {
-    /// key 的总数量 
+    /// key 的总数量
     pub key_num: usize,
     /// 数据文件的数量
     pub data_file_num: usize,
@@ -178,7 +179,7 @@ impl Engine {
 
                 // 从数据文件中加载内存索引
                 let current_seq_no = engine.load_index_from_data_files()?;
-                
+
                 // 更新当前事务序列号
                 if current_seq_no > 0 {
                     engine.seq_no.store(current_seq_no + 1, Ordering::SeqCst);
@@ -239,9 +240,10 @@ impl Engine {
 
         // 更新内存索引
         if let Some(old_pos) = self.index.put(key.to_vec(), log_record_pos) {
-            self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+            self.reclaim_size
+                .fetch_add(old_pos.size as usize, Ordering::SeqCst);
         }
-  
+
         Ok(())
     }
 
@@ -267,11 +269,13 @@ impl Engine {
         // 写入到数据文件中
         let pos = self.append_log_record(&mut record)?;
         // delete 这条记录本身也是可以回收的
-        self.reclaim_size.fetch_add(pos.size as usize, Ordering::SeqCst);
+        self.reclaim_size
+            .fetch_add(pos.size as usize, Ordering::SeqCst);
 
         // 删除内存索引中对应的 key
-        if let Some(old_pos) =  self.index.delete(key.to_vec()) {
-            self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+        if let Some(old_pos) = self.index.delete(key.to_vec()) {
+            self.reclaim_size
+                .fetch_add(old_pos.size as usize, Ordering::SeqCst);
         }
 
         Ok(())
@@ -529,7 +533,8 @@ impl Engine {
     fn upadte_index(&self, key: Vec<u8>, rec_type: LogRecordType, pos: LogRecordPos) {
         if rec_type == LogRecordType::NORMAL {
             if let Some(old_pos) = self.index.put(key.clone(), pos) {
-                self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+                self.reclaim_size
+                    .fetch_add(old_pos.size as usize, Ordering::SeqCst);
             }
         }
         if rec_type == LogRecordType::DELETE {

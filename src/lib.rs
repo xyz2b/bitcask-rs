@@ -1,14 +1,14 @@
-mod index;
+mod batch;
 mod data;
-mod fio;
-pub mod errors;
 pub mod db;
+pub mod errors;
+mod fio;
+mod index;
+mod iterator;
+mod merge;
+mod mvcc;
 pub mod options;
 mod util;
-mod iterator;
-mod mvcc;
-mod batch;
-mod merge;
 
 #[cfg(test)]
 mod db_tests;

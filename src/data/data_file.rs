@@ -24,7 +24,6 @@ pub const HINT_FILE_NAME: &str = "hint-index";
 pub const MERGE_FIN_FILE_NAME: &str = "merge-fin";
 pub const SEQ_NO_FILE_NAME: &str = "seq-no";
 
-
 /// 数据文件
 pub struct DataFile {
     file_id: Arc<RwLock<u32>>,           // 数据文件 ID
@@ -88,7 +87,6 @@ impl DataFile {
             io_manager: io_manager,
         })
     }
-    
 
     pub fn get_write_off(&self) -> u64 {
         let read_guard = self.wirte_off.read();

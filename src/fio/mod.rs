@@ -25,5 +25,4 @@ pub fn new_io_manager(file_name: PathBuf, io_type: IOType) -> Box<dyn IOManager>
         IOType::StandardFIO => Box::new(FileIO::new(file_name).unwrap()),
         IOType::MemoryMap => Box::new(MMapIO::new(file_name).unwrap()),
     }
-    
 }
