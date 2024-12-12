@@ -1,16 +1,19 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::atomic::Ordering};
 
 use log::error;
 
 use crate::{
     batch::{log_record_key_with_seq, parse_log_record_key, NON_TRANSACTION_SEQ_NO},
     data::{
-        data_file::{get_data_file_name, DataFile, HINT_FILE_NAME, MERGE_FIN_FILE_NAME, SEQ_NO_FILE_NAME},
+        data_file::{
+            get_data_file_name, DataFile, HINT_FILE_NAME, MERGE_FIN_FILE_NAME, SEQ_NO_FILE_NAME,
+        },
         log_record::{decode_log_record_pos, LogRecord, LogRecordType},
     },
     db::{Engine, FILE_LOCK_NAME},
     errors::{Errors, Result},
     options::{IOType, Options},
+    util,
 };
 
 const MERGE_DIR_NAME: &'static str = "merge";
@@ -23,6 +26,25 @@ impl Engine {
         let lock = self.merging_lock.try_lock();
         if lock.is_none() {
             return Err(Errors::MergeInProgress);
+        }
+
+        // 判断是否达到 merge 阈值
+        let reclaim_size = self.reclaim_size.load(Ordering::SeqCst);
+        let total_size = util::file::dir_disk_size(self.options.dir_path.clone());
+
+        // 没有数据不需要进行 merge
+        if total_size <= 0 {
+            return Ok(());
+        }
+
+        if (reclaim_size as f32 / total_size as f32) < self.options.data_file_merge_ratio {
+            return Err(Errors::MergeRatioUnreached);
+        }
+
+        // 判断磁盘剩余空间是否能够容纳 merge 之后的数据
+        let available_disk_space = util::file::available_disk_size(self.options.dir_path.clone());
+        if total_size - reclaim_size as u64 >= available_disk_space {
+            return Err(Errors::MergeNoEnoughSpace);
         }
 
         let merge_path = get_merge_path(self.options.dir_path.clone());
@@ -112,11 +134,19 @@ impl Engine {
         // sync 活跃数据文件，保证数据持久性
         active_file.sync()?;
         let acitve_file_id = active_file.get_file_id();
-        let new_active_file = DataFile::new(self.options.dir_path.clone(), acitve_file_id + 1, IOType::StandardFIO)?;
+        let new_active_file = DataFile::new(
+            self.options.dir_path.clone(),
+            acitve_file_id + 1,
+            IOType::StandardFIO,
+        )?;
         *active_file = new_active_file;
 
         // 加载到旧的数据文件中
-        let old_file = DataFile::new(self.options.dir_path.clone(), acitve_file_id, IOType::StandardFIO)?;
+        let old_file = DataFile::new(
+            self.options.dir_path.clone(),
+            acitve_file_id,
+            IOType::StandardFIO,
+        )?;
         older_files.insert(acitve_file_id, old_file);
 
         // 加到待 merge 的文件列表
@@ -128,7 +158,8 @@ impl Engine {
         // 打开所有需要 merge 的数据文件
         let mut merge_files = Vec::new();
         for file_id in merge_file_ids.iter() {
-            let data_file = DataFile::new(self.options.dir_path.clone(), *file_id, IOType::StandardFIO)?;
+            let data_file =
+                DataFile::new(self.options.dir_path.clone(), *file_id, IOType::StandardFIO)?;
             merge_files.push(data_file);
         }
 
@@ -177,11 +208,11 @@ fn get_merge_path(dir_path: PathBuf) -> PathBuf {
 }
 
 // 加载 merge 数据目录
-pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<()> {
+pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<bool> {
     let merge_path = get_merge_path(dir_path.clone());
     // 没有发生过 merge 则直接返回
     if !merge_path.is_dir() {
-        return Ok(());
+        return Ok(false);
     }
 
     let dir = match fs::read_dir(merge_path.clone()) {
@@ -217,7 +248,7 @@ pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<()> {
     // merge 没有完成，直接返回
     if !merge_finished {
         fs::remove_dir_all(merge_path.clone()).unwrap();
-        return Ok(());
+        return Ok(false);
     }
 
     // 打开标识 merge 完成的文件，取出未参与 merge 的文件 id
@@ -244,5 +275,260 @@ pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<()> {
     // 最后删除临时 merge 目录
     fs::remove_dir_all(merge_path.clone()).unwrap();
 
-    Ok(())
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, thread, time};
+
+    use bytes::Bytes;
+    use util::rand_kv::{get_test_key, get_test_value};
+
+    use crate::options::IndexType;
+
+    use super::*;
+
+    #[test]
+    fn test_merge_1() {
+        // 没有任何数据的情况下进行 Merge
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-1");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        let res1: std::result::Result<(), Errors> = engine.merge();
+        assert!(res1.is_ok());
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
+
+    #[test]
+    fn test_merge_2() {
+        // 全部都是有效数据的情况
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-2");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        for i in 0..50000 {
+            let res = engine.put(get_test_key(i), get_test_value(i));
+            assert!(res.is_ok());
+        }
+
+        let res1 = engine.merge();
+        assert!(res1.is_ok());
+
+        // 重启校验
+        std::mem::drop(engine);
+
+        let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
+        let keys = engine2.list_keys().unwrap();
+        assert_eq!(keys.len(), 50000);
+
+        for i in 0..50000 {
+            let res = engine2.get(get_test_key(i));
+            assert!(res.is_ok());
+            assert!(res.ok().unwrap().len() > 0);
+        }
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
+
+    #[test]
+    fn test_merge_3() {
+        // 部分有效数据和删除部分数据的情况
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-3");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        opts.index_type = IndexType::BPTree;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        for i in 0..1000 {
+            let res = engine.put(get_test_key(i), get_test_value(i));
+            assert!(res.is_ok());
+        }
+
+        for i in 0..200 {
+            let res = engine.put(get_test_key(i), Bytes::from("new value in merge"));
+            assert!(res.is_ok());
+        }
+
+        for i in 900..1000 {
+            let res = engine.delete(get_test_key(i));
+            assert!(res.is_ok());
+        }
+
+        let res1 = engine.merge();
+        assert!(res1.is_ok());
+
+        // 重启校验
+        std::mem::drop(engine);
+
+        let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
+        let keys = engine2.list_keys().unwrap();
+        assert_eq!(keys.len(), 900);
+
+        for i in 0..200 {
+            let res = engine2.get(get_test_key(i));
+            assert!(res.is_ok());
+            assert_eq!(res.ok().unwrap(), Bytes::from("new value in merge"));
+        }
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
+
+    #[test]
+    fn test_merge_4() {
+        // 全都是无效数据的情况
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-4");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        for i in 0..50000 {
+            let res = engine.put(get_test_key(i), get_test_value(i));
+            assert!(res.is_ok());
+
+            let res_del = engine.delete(get_test_key(i));
+            assert!(res_del.is_ok());
+        }
+
+        let res1 = engine.merge();
+        assert!(res1.is_ok());
+
+        // 重启校验
+        std::mem::drop(engine);
+
+        let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
+        let keys = engine2.list_keys().unwrap();
+        assert_eq!(keys.len(), 0);
+
+        for i in 0..50000 {
+            let res = engine2.get(get_test_key(i));
+            assert!(res.is_err());
+            assert_eq!(res.err().unwrap(), Errors::KeyNotFound);
+        }
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
+
+    #[test]
+    fn test_merge_5() {
+        // merge 过程中有新的写入和删除
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-5");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        for i in 0..50000 {
+            let res = engine.put(get_test_key(i), get_test_value(i));
+            assert!(res.is_ok());
+        }
+
+        for i in 0..10000 {
+            let res = engine.put(get_test_key(i), Bytes::from("new value in merge"));
+            assert!(res.is_ok());
+        }
+
+        for i in 40000..50000 {
+            let res = engine.delete(get_test_key(i));
+            assert!(res.is_ok());
+        }
+
+        let eng = Arc::new(engine);
+
+        let mut handles = vec![];
+        let eng1 = eng.clone();
+        let handle1 = thread::spawn(move || {
+            for i in 60000..100000 {
+                let res = eng1.put(get_test_key(i), Bytes::from("new value in merge"));
+                assert!(res.is_ok());
+            }
+        });
+        handles.push(handle1);
+
+        let eng2 = eng.clone();
+        let handle2 = thread::spawn(move || {
+            let res = eng2.merge();
+            assert!(res.is_ok());
+        });
+        handles.push(handle2);
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // 重启校验
+        std::mem::drop(eng);
+
+        let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
+        let keys = engine2.list_keys().unwrap();
+        assert_eq!(keys.len(), 80000);
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
+
+    #[test]
+    fn test_merge_6() {
+        // merge 过程中有新的写入和删除
+        let mut opts = Options::default();
+        opts.dir_path = PathBuf::from("/tmp/bitcask-rs-merge-6");
+        opts.data_file_size = 64 * 1024 * 1024;
+        opts.data_file_merge_ratio = 0 as f32;
+        let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+        for i in 0..50000 {
+            let res = engine.put(get_test_key(i), get_test_value(i));
+            assert!(res.is_ok());
+        }
+
+        for i in 0..10000 {
+            let res = engine.put(get_test_key(i), Bytes::from("new value in merge"));
+            assert!(res.is_ok());
+        }
+
+        for i in 40000..50000 {
+            let res = engine.delete(get_test_key(i));
+            assert!(res.is_ok());
+        }
+
+        let eng = Arc::new(engine);
+
+        let mut handles = vec![];
+        let eng1 = eng.clone();
+        let handle1 = thread::spawn(move || {
+            let res = eng1.merge();
+            assert!(res.is_ok());
+        });
+        handles.push(handle1);
+
+        let eng2 = eng.clone();
+        let handle2 = thread::spawn(move || {
+            let duration = time::Duration::from_secs(1);
+            thread::sleep(duration);
+            let res = eng2.merge();
+            assert!(res.is_err());
+            assert_eq!(res.err().unwrap(), Errors::MergeInProgress);
+        });
+        handles.push(handle2);
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // 重启校验
+        std::mem::drop(eng);
+
+        let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
+        let keys = engine2.list_keys().unwrap();
+        assert_eq!(keys.len(), 40000);
+
+        std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    }
 }

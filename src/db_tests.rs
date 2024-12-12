@@ -49,7 +49,9 @@ fn test_engine_put() {
     }
 
     // 重启后再 put 数据
-    // 先关闭原数据库 todo
+    // 先关闭原数据库
+    std::mem::drop(engine);
+
     let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
     let res9 = engine2.put(get_test_key(55), get_test_value(55));
     assert!(res9.is_ok());
@@ -105,7 +107,9 @@ fn test_engine_get() {
     assert_eq!(get_test_value(505), res10.unwrap());
 
     // 重启后再 put 数据
-    // 先关闭原数据库 todo
+    // 先关闭原数据库
+    std::mem::drop(engine);
+
     let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
     let res11 = engine2.get(get_test_key(111));
     assert_eq!(res11.unwrap(), get_test_value(111));
@@ -152,7 +156,9 @@ fn test_engine_delete() {
     assert_eq!(res9.unwrap(), Bytes::from("a new value"));
 
     // 重启后再 put 数据
-    // 先关闭原数据库 todo
+    // 先关闭原数据库
+    std::mem::drop(engine);
+
     let engine2 = Engine::open(opts.clone()).expect("failed to open engine");
     let res10 = engine2.get(get_test_key(111));
     assert_eq!(res10.err().unwrap(), Errors::KeyNotFound);
@@ -220,6 +226,35 @@ fn test_engine_filelock() {
 
     let res3 = Engine::open(opts.clone());
     assert!(res3.is_ok());
+
+    // 删除测试的文件夹
+    std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+}
+
+#[test]
+fn test_engine_stat() {
+    let mut opts = Options::default();
+    opts.dir_path = PathBuf::from("/tmp/bitcask-rs-stat");
+    opts.data_file_size = 64 * 1024 * 1024;
+    let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+    for i in 0..=10000 {
+        let res = engine.put(get_test_key(i), get_test_value(i));
+        assert!(res.is_ok());
+    }
+
+    for i in 0..=1000 {
+        let res = engine.put(get_test_key(i), get_test_value(i));
+        assert!(res.is_ok());
+    }
+
+    for i in 2000..=5000 {
+        let res = engine.delete(get_test_key(i));
+        assert!(res.is_ok());
+    }
+
+    let stat = engine.stat().unwrap();
+    assert!(stat.reclaim_size > 0);
 
     // 删除测试的文件夹
     std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
-use jammdb::{Error, DB};
+use jammdb::DB;
 
 use crate::{
     data::log_record::{decode_log_record_pos, LogRecordPos},
@@ -32,12 +32,18 @@ impl BPTree {
 }
 
 impl Indexer for BPTree {
-    fn put(&self, key: Vec<u8>, pos: crate::data::log_record::LogRecordPos) -> bool {
+    fn put(&self, key: Vec<u8>, pos: crate::data::log_record::LogRecordPos) -> Option<LogRecordPos> {
+        let mut result = None;
         let tx = self.tree.tx(true).expect("failed to begin tx");
         let bucket = tx.get_bucket(BPTREE_BUCKET_NAME).unwrap();
+
+        if let Some(kv) = bucket.get_kv(key.clone()) {
+            result = Some(decode_log_record_pos(kv.value().to_vec()));
+        }
+
         bucket.put(key, pos.encode()).expect("failed to put value");
         tx.commit().unwrap();
-        true
+        result
     }
 
     fn get(&self, key: Vec<u8>) -> Option<crate::data::log_record::LogRecordPos> {
@@ -49,16 +55,16 @@ impl Indexer for BPTree {
         None
     }
 
-    fn delete(&self, key: Vec<u8>) -> bool {
+    fn delete(&self, key: Vec<u8>) -> Option<LogRecordPos> {
+        let mut result = None;
         let tx = self.tree.tx(true).expect("failed to begin tx");
         let bucket = tx.get_bucket(BPTREE_BUCKET_NAME).unwrap();
-        if let Err(e) = bucket.delete(key) {
-            if e == Error::KeyValueMissing {
-                return false;
-            }
-        }
+        if let Ok(kv) = bucket.delete(key) {
+            result = Some(decode_log_record_pos(kv.value().to_vec()));
+        };
+
         tx.commit().unwrap();
-        true
+        result
     }
 
     fn list_keys(&self) -> crate::errors::Result<Vec<bytes::Bytes>> {
@@ -95,6 +101,13 @@ impl Indexer for BPTree {
             curr_index: 0,
             options,
         })
+    }
+
+    fn clear(&self) {
+        let tx = self.tree.tx(true).expect("failed to begin tx");
+        tx.delete_bucket(BPTREE_BUCKET_NAME).unwrap();
+        tx.get_or_create_bucket(BPTREE_BUCKET_NAME).unwrap();
+        tx.commit().unwrap();
     }
 }
 
@@ -156,17 +169,22 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
-        assert_eq!(res1, true);
+        assert!(res1.is_none());
         let res2 = bpt.put(
             "aa".as_bytes().to_vec(),
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
-        assert_eq!(res2, true);
+        assert!(res2.is_none());
+
+        let res3 = bpt.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 100, size: 11});
+        assert!(res3.is_some());
 
         std::fs::remove_dir_all(dir_path).expect("failed to remove path");
     }
@@ -182,17 +200,19 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
-        assert_eq!(res1, true);
+        assert!(res1.is_none());
         let res2 = bpt.put(
             "aa".as_bytes().to_vec(),
             LogRecordPos {
                 file_id: 11,
                 offset: 22,
+                size: 11,
             },
         );
-        assert_eq!(res2, true);
+        assert!(res2.is_none());
 
         let pos1 = bpt.get("".as_bytes().to_vec());
         assert!(pos1.is_some());
@@ -217,24 +237,66 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
-        assert_eq!(res1, true);
+        assert!(res1.is_none());
         let res2 = bpt.put(
             "aa".as_bytes().to_vec(),
             LogRecordPos {
                 file_id: 11,
                 offset: 22,
+                size: 11,
             },
         );
-        assert_eq!(res2, true);
+        assert!(res2.is_none());
 
         let del1 = bpt.delete("".as_bytes().to_vec());
-        assert!(del1);
+        assert!(del1.is_some());
         let del2 = bpt.delete("aa".as_bytes().to_vec());
-        assert!(del2);
+        assert!(del2.is_some());
         let del3 = bpt.delete("not_exist".as_bytes().to_vec());
-        assert!(!del3);
+        assert!(del3.is_none());
+
+        std::fs::remove_dir_all(dir_path).expect("failed to remove path");
+    }
+
+
+
+    #[test]
+    fn test_bptree_clear() {
+        let dir_path = PathBuf::from("/tmp/bitcask-rs-bptree-clear");
+        fs::create_dir_all(dir_path.clone()).unwrap();
+        let bpt = BPTree::new(dir_path.clone());
+
+        let res1 = bpt.put(
+            "".as_bytes().to_vec(),
+            LogRecordPos {
+                file_id: 1,
+                offset: 10,
+                size: 11,
+            },
+        );
+        assert!(res1.is_none());
+        let res2 = bpt.put(
+            "aa".as_bytes().to_vec(),
+            LogRecordPos {
+                file_id: 11,
+                offset: 22,
+                size: 11,
+            },
+        );
+        assert!(res2.is_none());
+
+        let pos1 = bpt.get("".as_bytes().to_vec());
+        assert!(pos1.is_some());
+        assert_eq!(pos1.unwrap().file_id, 1);
+        assert_eq!(pos1.unwrap().offset, 10);
+
+        bpt.clear();
+
+        let pos2 = bpt.get("".as_bytes().to_vec());
+        assert!(pos2.is_none());
 
         std::fs::remove_dir_all(dir_path).expect("failed to remove path");
     }
@@ -257,6 +319,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         let mut iter2 = bpt.iterator(IteratorOptions::default());
@@ -275,6 +338,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         bpt.put(
@@ -282,6 +346,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         bpt.put(
@@ -289,6 +354,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         let mut iter4 = bpt.iterator(IteratorOptions::default());
@@ -337,6 +403,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         let mut iter2 = bpt.iterator(IteratorOptions::default());
@@ -350,6 +417,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         bpt.put(
@@ -357,6 +425,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         bpt.put(
@@ -364,6 +433,7 @@ mod tests {
             LogRecordPos {
                 file_id: 1,
                 offset: 10,
+                size: 11,
             },
         );
         let mut iter3 = bpt.iterator(IteratorOptions::default());

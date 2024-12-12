@@ -72,6 +72,15 @@ pub enum Errors {
 
   #[error("unable to use wirte batch, seq file not exists")]
   UableToUseWriteBatch,
+
+  #[error("invaild data file merge ratio")]
+  InvaildDataFileMergeRatio,
+
+  #[error("merge ratio unreached")]
+  MergeRatioUnreached,
+
+  #[error("disk space is not enough for merge")]
+  MergeNoEnoughSpace,
 }
 
 pub type Result<T> = result::Result<T, Errors>;

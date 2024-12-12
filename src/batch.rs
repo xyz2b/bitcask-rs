@@ -130,11 +130,20 @@ impl WriteBatch<'_> {
         for (_, item) in pending_write.iter() {
             let record_pos = positions.get(&item.key).unwrap();
             if item.rec_type == LogRecordType::NORMAL {
-                self.engine.index.put(item.key.clone(), *record_pos);
+                if let Some(old_pos) = self.engine.index.put(item.key.clone(), *record_pos) {
+                    self.engine.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+                }
             }
 
             if item.rec_type == LogRecordType::DELETE {
-                self.engine.index.delete(item.key.clone());
+                let mut size = record_pos.size;
+
+                if let Some(old_pos) = self.engine.index.delete(item.key.clone()) {
+                    size += old_pos.size;
+                }
+
+                self.engine.reclaim_size.fetch_add(size as usize, Ordering::SeqCst);
+
             }
         }
 

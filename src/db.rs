@@ -23,7 +23,7 @@ use crate::{
     errors::{Errors, Result},
     index,
     merge::load_merge_files,
-    options::{IOType, IndexType, Options},
+    options::{IOType, IndexType, Options}, util,
 };
 
 const INITIAL_FILE_ID: u32 = 0;
@@ -44,6 +44,20 @@ pub struct Engine {
     bytes_write: Arc<AtomicUsize>, // 累计写入了多少字节
     pub(crate) seq_file_exists: bool, // 事务序列号文件是否存在
     pub(crate) is_initial: bool, // 是否是第一次初始化该目录
+    pub(crate) reclaim_size: Arc<AtomicUsize>, // 累计有多少空间可以 merge 释放
+}
+
+/// 存储引擎相关统计数据 
+#[derive(Debug)]
+pub struct Stat {
+    /// key 的总数量 
+    pub key_num: usize,
+    /// 数据文件的数量
+    pub data_file_num: usize,
+    /// 可以回收的数据量
+    pub reclaim_size: usize,
+    /// 数据目录占据的磁盘空间大小
+    pub disk_size: u64,
 }
 
 impl Engine {
@@ -85,7 +99,10 @@ impl Engine {
         }
 
         // 加载 merge 数据目录
-        load_merge_files(dir_path.clone())?;
+        let is_merged = match load_merge_files(dir_path.clone()) {
+            Ok(is_merged) => is_merged,
+            Err(e) => return Err(e),
+        };
 
         // 加载数据文件
         let mut data_files = load_data_files(dir_path.clone(), opts.mmap_at_startup)?;
@@ -128,6 +145,7 @@ impl Engine {
             bytes_write: Arc::new(AtomicUsize::new(0)),
             seq_file_exists: false,
             is_initial: is_initial,
+            reclaim_size: Arc::new(AtomicUsize::new(0)),
         };
 
         // B+ 树不需要从数据文件加载索引
@@ -150,14 +168,31 @@ impl Engine {
         }
 
         if engine.options.index_type == IndexType::BPTree {
-            // 加载事务序列号
-            let (exists, seq_no) = engine.load_seq_no();
-            engine.seq_no.store(seq_no, Ordering::SeqCst);
-            engine.seq_file_exists = exists;
-            
-            // 设置当前活跃文件的偏移
-            let active_file = engine.active_file.write();
-            active_file.set_write_off(active_file.file_size());
+            // merge 之后重新加载 bptree 索引
+            if is_merged {
+                // 清空之前的索引数据
+                engine.index.clear();
+
+                // 从 hint 文件中加载索引
+                engine.load_index_from_hint_file()?;
+
+                // 从数据文件中加载内存索引
+                let current_seq_no = engine.load_index_from_data_files()?;
+                
+                // 更新当前事务序列号
+                if current_seq_no > 0 {
+                    engine.seq_no.store(current_seq_no + 1, Ordering::SeqCst);
+                }
+            } else {
+                // 加载事务序列号
+                let (exists, seq_no) = engine.load_seq_no();
+                engine.seq_no.store(seq_no, Ordering::SeqCst);
+                engine.seq_file_exists = exists;
+
+                // 设置当前活跃文件的偏移
+                let active_file = engine.active_file.write();
+                active_file.set_write_off(active_file.file_size());
+            }
         }
 
         Ok(engine)
@@ -203,10 +238,10 @@ impl Engine {
         let log_record_pos = self.append_log_record(&mut record)?;
 
         // 更新内存索引
-        let ok = self.index.put(key.to_vec(), log_record_pos);
-        if !ok {
-            return Err(Errors::IndexUpdateFailed);
+        if let Some(old_pos) = self.index.put(key.to_vec(), log_record_pos) {
+            self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
         }
+  
         Ok(())
     }
 
@@ -230,12 +265,13 @@ impl Engine {
         };
 
         // 写入到数据文件中
-        self.append_log_record(&mut record)?;
+        let pos = self.append_log_record(&mut record)?;
+        // delete 这条记录本身也是可以回收的
+        self.reclaim_size.fetch_add(pos.size as usize, Ordering::SeqCst);
 
         // 删除内存索引中对应的 key
-        let ok = self.index.delete(key.to_vec());
-        if !ok {
-            return Err(Errors::IndexUpdateFailed);
+        if let Some(old_pos) =  self.index.delete(key.to_vec()) {
+            self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
         }
 
         Ok(())
@@ -342,6 +378,7 @@ impl Engine {
         Ok(LogRecordPos {
             file_id: active_file.get_file_id(),
             offset: write_off,
+            size: enc_record.len() as u32,
         })
     }
 
@@ -405,6 +442,7 @@ impl Engine {
                 let log_record_pos = LogRecordPos {
                     file_id: *file_id,
                     offset: offset,
+                    size: size as u32,
                 };
 
                 // 解析 key，拿到实际的 key 和 seq no
@@ -487,13 +525,20 @@ impl Engine {
         read_guard.sync()
     }
 
-    // 更新内存索引
+    // 加载磁盘数据时更新内存索引
     fn upadte_index(&self, key: Vec<u8>, rec_type: LogRecordType, pos: LogRecordPos) {
         if rec_type == LogRecordType::NORMAL {
-            self.index.put(key.clone(), pos);
+            if let Some(old_pos) = self.index.put(key.clone(), pos) {
+                self.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+            }
         }
         if rec_type == LogRecordType::DELETE {
-            self.index.delete(key);
+            // delete 这条记录本身也是可以回收的
+            let mut size = pos.size;
+            if let Some(old_pos) = self.index.delete(key) {
+                size += old_pos.size;
+            }
+            self.reclaim_size.fetch_add(size as usize, Ordering::SeqCst);
         }
     }
 
@@ -505,6 +550,18 @@ impl Engine {
         for (_, file) in older_files.iter_mut() {
             file.set_io_manager(self.options.dir_path.clone(), IOType::StandardFIO);
         }
+    }
+
+    /// 获取数据库统计信息
+    pub fn stat(&self) -> Result<Stat> {
+        let keys = self.list_keys()?;
+        let older_files = self.older_files.read();
+        Ok(Stat {
+            key_num: keys.len(),
+            data_file_num: older_files.len() + 1,
+            reclaim_size: self.reclaim_size.load(Ordering::SeqCst),
+            disk_size: util::file::dir_disk_size(self.options.dir_path.clone()),
+        })
     }
 }
 
@@ -524,6 +581,10 @@ fn check_options(opts: &Options) -> Option<Errors> {
 
     if opts.data_file_size <= 0 {
         return Some(Errors::DataFileSizeTooSmall);
+    }
+
+    if opts.data_file_merge_ratio < 0 as f32 || opts.data_file_merge_ratio > 1 as f32 {
+        return Some(Errors::InvaildDataFileMergeRatio);
     }
 
     None

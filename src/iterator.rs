@@ -267,5 +267,7 @@ mod tests {
     assert_eq!(Bytes::from("bbac"), res1.unwrap().0);
     let res2 = iter1.next();
     assert!(res2.is_none());
+
+    std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
   }
 }

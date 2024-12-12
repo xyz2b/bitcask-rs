@@ -22,9 +22,13 @@ impl SkipList {
 }
 
 impl Indexer for SkipList {
-    fn put(&self, key: Vec<u8>, pos: LogRecordPos) -> bool {
-        self.skl.insert(key, pos);
-        true
+    fn put(&self, key: Vec<u8>, pos: LogRecordPos) -> Option<LogRecordPos> {
+      let mut result = None;
+      if let Some(entry) = self.skl.get(&key) {
+        result = Some(*entry.value());
+      }
+      self.skl.insert(key, pos);
+      result
     }
 
     fn get(&self, key: Vec<u8>) -> Option<LogRecordPos> {
@@ -34,9 +38,11 @@ impl Indexer for SkipList {
         None
     }
 
-    fn delete(&self, key: Vec<u8>) -> bool {
-      let remove_res = self.skl.remove(&key);
-      remove_res.is_some()
+    fn delete(&self, key: Vec<u8>) -> Option<LogRecordPos> {
+      if let Some(remove_res) = self.skl.remove(&key) {
+        return Some(*remove_res.value());
+      }
+      None
     }
 
     fn list_keys(&self) -> crate::errors::Result<Vec<bytes::Bytes>> {
@@ -65,6 +71,10 @@ impl Indexer for SkipList {
           options
         }
       )
+    }
+
+    fn clear(&self) {
+        self.skl.clear();
     }
 }
 
@@ -117,20 +127,22 @@ mod tests {
   fn test_skiplist_put() {
     let sk = SkipList::new();
 
-    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10});
-    assert_eq!(res1, true);
-    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10});
-    assert_eq!(res2, true);
+    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10, size: 11});
+    assert!(res1.is_none());
+    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10, size: 11});
+    assert!(res2.is_none());
+    let res3 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 100, size: 11});
+    assert!(res3.is_some());
   }
 
   #[test]
   fn test_skiplist_get() {
     let sk = SkipList::new();
 
-    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10});
-    assert_eq!(res1, true);
-    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 11, offset: 22});
-    assert_eq!(res2, true);
+    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10, size: 11});
+    assert!(res1.is_none());
+    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 11, offset: 22, size: 11});
+    assert!(res2.is_none());
 
     let pos1 = sk.get("".as_bytes().to_vec());
     assert!(pos1.is_some());
@@ -146,17 +158,51 @@ mod tests {
   fn test_skiplist_delete() {
     let sk = SkipList::new();
 
-    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10});
-    assert_eq!(res1, true);
-    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 11, offset: 22});
-    assert_eq!(res2, true);
+    let res1 = sk.put("".as_bytes().to_vec(), LogRecordPos {file_id: 1, offset: 10, size: 11});
+    assert!(res1.is_none());
+    let res2 = sk.put("aa".as_bytes().to_vec(), LogRecordPos {file_id: 11, offset: 22, size: 11});
+    assert!(res2.is_none());
 
     let del1 = sk.delete("".as_bytes().to_vec());
-    assert!(del1);
+    assert!(del1.is_some());
     let del2 = sk.delete("aa".as_bytes().to_vec());
-    assert!(del2);
+    assert!(del2.is_some());
     let del3 = sk.delete("not_exist".as_bytes().to_vec());
-    assert!(!del3);
+    assert!(del3.is_none());
+  }
+
+  #[test]
+  fn test_bptree_clear() {
+    let sk = SkipList::new();
+
+      let res1 = sk.put(
+          "".as_bytes().to_vec(),
+          LogRecordPos {
+              file_id: 1,
+              offset: 10,
+              size: 11,
+          },
+      );
+      assert!(res1.is_none());
+      let res2 = sk.put(
+          "aa".as_bytes().to_vec(),
+          LogRecordPos {
+              file_id: 11,
+              offset: 22,
+              size: 11,
+          },
+      );
+      assert!(res2.is_none());
+
+      let pos1 = sk.get("".as_bytes().to_vec());
+      assert!(pos1.is_some());
+      assert_eq!(pos1.unwrap().file_id, 1);
+      assert_eq!(pos1.unwrap().offset, 10);
+
+      sk.clear();
+
+      let pos2 = sk.get("".as_bytes().to_vec());
+      assert!(pos2.is_none());
   }
 
   #[test]
@@ -170,7 +216,7 @@ mod tests {
     assert!(res1.is_none());
 
     // 有一条数据的情况
-    sk.put("ccde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
+    sk.put("ccde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
     let mut iter2 = sk.iterator(IteratorOptions::default());
     iter2.seek("aa".as_bytes().to_vec());
     let res2 = iter2.next();
@@ -182,9 +228,9 @@ mod tests {
     assert!(res3.is_none());
 
     // 有多条数据的情况
-    sk.put("bbde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
-    sk.put("aaed".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
-    sk.put("cadd".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
+    sk.put("bbde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
+    sk.put("aaed".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
+    sk.put("cadd".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
     let mut iter4 = sk.iterator(IteratorOptions::default());
     iter4.seek("b".as_bytes().to_vec());
 
@@ -222,16 +268,16 @@ mod tests {
     assert!(res1.is_none());
 
     // 有一条数据的情况
-    sk.put("ccde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
+    sk.put("ccde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
     let mut iter2 = sk.iterator(IteratorOptions::default());
     iter2.seek("aa".as_bytes().to_vec());
     let res2: Option<(&Vec<u8>, &LogRecordPos)> = iter2.next();
     assert!(res2.is_some());
 
     // 有多条数据的情况
-    sk.put("bbde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
-    sk.put("aaed".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
-    sk.put("cadd".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10});
+    sk.put("bbde".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
+    sk.put("aaed".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
+    sk.put("cadd".as_bytes().to_vec(), LogRecordPos{file_id: 1, offset: 10, size: 11});
     let mut iter3 = sk.iterator(IteratorOptions::default());
     iter3.seek("b".as_bytes().to_vec());
 
