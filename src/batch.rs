@@ -26,7 +26,8 @@ pub struct WriteBatch<'a> {
 
 impl Engine {
     pub fn new_write_batch(&self, options: WriteBatchOptions) -> Result<WriteBatch> {
-        if self.options.index_type == IndexType::BPTree && !self.seq_file_exists && !self.is_initial {
+        if self.options.index_type == IndexType::BPTree && !self.seq_file_exists && !self.is_initial
+        {
             return Err(Errors::UableToUseWriteBatch);
         }
 
@@ -131,7 +132,9 @@ impl WriteBatch<'_> {
             let record_pos = positions.get(&item.key).unwrap();
             if item.rec_type == LogRecordType::NORMAL {
                 if let Some(old_pos) = self.engine.index.put(item.key.clone(), *record_pos) {
-                    self.engine.reclaim_size.fetch_add(old_pos.size as usize, Ordering::SeqCst);
+                    self.engine
+                        .reclaim_size
+                        .fetch_add(old_pos.size as usize, Ordering::SeqCst);
                 }
             }
 
@@ -142,8 +145,9 @@ impl WriteBatch<'_> {
                     size += old_pos.size;
                 }
 
-                self.engine.reclaim_size.fetch_add(size as usize, Ordering::SeqCst);
-
+                self.engine
+                    .reclaim_size
+                    .fetch_add(size as usize, Ordering::SeqCst);
             }
         }
 
