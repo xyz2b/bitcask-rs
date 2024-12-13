@@ -18,29 +18,29 @@ pub fn dir_disk_size(dir_path: PathBuf) -> u64 {
 
 /// 拷贝数据目录
 pub fn copy_dir(src: PathBuf, dest: PathBuf, exculde: &[&str]) -> io::Result<()> {
-  if !dest.exists() {
-    fs::create_dir_all(&dest)?;
-  }
-
-  for dir_entry in fs::read_dir(src)? {
-    let entry = dir_entry?;
-    let src_path = entry.path();
-
-    if exculde.iter().any(|&x| src_path.ends_with(x)) {
-      continue;
+    if !dest.exists() {
+        fs::create_dir_all(&dest)?;
     }
 
-    println!("{:?}", entry.file_name());
+    for dir_entry in fs::read_dir(src)? {
+        let entry = dir_entry?;
+        let src_path = entry.path();
 
-    let dest_path = dest.join(entry.file_name());
-    if entry.file_type()?.is_dir() {
-      copy_dir(src_path, dest_path, exculde)?;
-    } else {
-      fs::copy(src_path, dest_path)?;
+        if exculde.iter().any(|&x| src_path.ends_with(x)) {
+            continue;
+        }
+
+        println!("{:?}", entry.file_name());
+
+        let dest_path = dest.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(src_path, dest_path, exculde)?;
+        } else {
+            fs::copy(src_path, dest_path)?;
+        }
     }
-  }
 
-  Ok(())
+    Ok(())
 }
 
 #[cfg(test)]
