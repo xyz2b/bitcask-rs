@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::path::PathBuf;
+use std::path:: PathBuf;
 
 use crate::{
     db::Engine,
@@ -258,4 +258,36 @@ fn test_engine_stat() {
 
     // 删除测试的文件夹
     std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+}
+
+#[test]
+fn test_engine_backup() {
+    let mut opts = Options::default();
+    opts.dir_path = PathBuf::from("/tmp/bitcask-rs-backup");
+    opts.data_file_size = 64 * 1024 * 1024;
+    let engine = Engine::open(opts.clone()).expect("failed to open engine");
+
+    for i in 0..=10000 {
+        let res = engine.put(get_test_key(i), get_test_value(i));
+        assert!(res.is_ok());
+    }
+
+    let backup_dir = PathBuf::from("/tmp/bitcask-rs-backup-test");
+    let backup_res = engine.backup(backup_dir.clone());
+    assert!(backup_res.is_ok());
+
+    let mut opts2 = Options::default();
+    opts2.dir_path = backup_dir;
+    opts2.data_file_size = 64 * 1024 * 1024;
+    let engine2 = Engine::open(opts2.clone()).expect("failed to open engine");
+
+    for i in 0..=10000 {
+        let res = engine2.get(get_test_key(i));
+        assert!(res.is_ok());
+        assert_eq!(res.ok().unwrap(), get_test_value(i));
+    }
+
+    // 删除测试的文件夹
+    std::fs::remove_dir_all(opts.clone().dir_path).expect("failed to remove path");
+    std::fs::remove_dir_all(opts2.clone().dir_path).expect("failed to remove path");
 }

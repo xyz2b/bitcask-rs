@@ -81,6 +81,9 @@ pub enum Errors {
 
     #[error("disk space is not enough for merge")]
     MergeNoEnoughSpace,
+
+    #[error("failed to copy database dir")]
+    FailedToCopyDir,
 }
 
 pub type Result<T> = result::Result<T, Errors>;

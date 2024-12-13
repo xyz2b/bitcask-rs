@@ -547,6 +547,17 @@ impl Engine {
         }
     }
 
+    /// 备份数据目录
+    pub fn backup(&self, dest_dir: PathBuf) -> Result<()> {
+        let exculde = [FILE_LOCK_NAME];
+        if let Err(e) = util::file::copy_dir(self.options.dir_path.clone(), dest_dir, &exculde) {
+            error!("failed to copy dir: {}", e);
+            return Err(Errors::FailedToCopyDir);
+        }
+
+        Ok(())
+    }
+
     fn reset_io_type(&self) {
         let mut active_file = self.active_file.write();
         active_file.set_io_manager(self.options.dir_path.clone(), IOType::StandardFIO);
