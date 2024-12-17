@@ -255,7 +255,7 @@ pub(crate) fn load_merge_files(dir_path: PathBuf) -> Result<bool> {
     let merge_fin_file = DataFile::new_merge_fin_file(merge_path.clone())?;
     let merge_fin_record = merge_fin_file.read_log_record(0)?;
     let v = String::from_utf8(merge_fin_record.record.value).unwrap();
-    let non_merge_fid = v.parse::<u32>().unwrap();
+    let non_merge_fid = v.parse::<u64>().unwrap();
 
     // 将旧的数据文件删除
     for fid in 0..non_merge_fid {

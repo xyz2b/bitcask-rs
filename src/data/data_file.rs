@@ -26,14 +26,14 @@ pub const SEQ_NO_FILE_NAME: &str = "seq-no";
 
 /// 数据文件
 pub struct DataFile {
-    file_id: Arc<RwLock<u32>>,           // 数据文件 ID
+    file_id: Arc<RwLock<u64>>,           // 数据文件 ID
     wirte_off: Arc<RwLock<u64>>,         // 当前写偏移，记录该数据文件写到哪个位置了
     io_manager: Box<dyn fio::IOManager>, // IO 管理接口
 }
 
 impl DataFile {
     // 创建或打开一个新的数据文件
-    pub fn new(dir_path: PathBuf, file_id: u32, io_type: IOType) -> Result<DataFile> {
+    pub fn new(dir_path: PathBuf, file_id: u64, io_type: IOType) -> Result<DataFile> {
         // 根据 path 和 file_id 构造出来完整的文件名称
         let filename = get_data_file_name(dir_path, file_id);
         // 初始化 IO manager
@@ -98,7 +98,7 @@ impl DataFile {
         *write_guard = offset;
     }
 
-    pub fn get_file_id(&self) -> u32 {
+    pub fn get_file_id(&self) -> u64 {
         let read_guard = self.file_id.read();
         *read_guard
     }
@@ -187,7 +187,7 @@ impl DataFile {
     }
 }
 
-pub fn get_data_file_name(path: PathBuf, file_id: u32) -> PathBuf {
+pub fn get_data_file_name(path: PathBuf, file_id: u64) -> PathBuf {
     let name = std::format!("{:09}", file_id) + DATA_FILE_NAME_SUFFIX;
     path.join(name)
 }

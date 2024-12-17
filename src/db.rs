@@ -27,7 +27,7 @@ use crate::{
     util,
 };
 
-const INITIAL_FILE_ID: u32 = 0;
+const INITIAL_FILE_ID: u64 = 0;
 pub(crate) const FILE_LOCK_NAME: &str = "flock";
 const SEQ_NO_KEY: &str = "seq.no";
 
@@ -35,9 +35,9 @@ const SEQ_NO_KEY: &str = "seq.no";
 pub struct Engine {
     pub(crate) options: Arc<Options>,
     pub(crate) active_file: Arc<RwLock<DataFile>>, // 当前活跃数据文件
-    pub(crate) older_files: Arc<RwLock<HashMap<u32, DataFile>>>, // 旧的数据文件集合
+    pub(crate) older_files: Arc<RwLock<HashMap<u64, DataFile>>>, // 旧的数据文件集合
     pub(crate) index: Box<dyn index::Indexer>,     // 数据内存索引
-    file_ids: Vec<u32>, // 数据库启动时的文件 id，只用于加载索引时使用，不能在其他地方更新或使用
+    file_ids: Vec<u64>, // 数据库启动时的文件 id，只用于加载索引时使用，不能在其他地方更新或使用
     pub(crate) batch_commit_lock: Mutex<()>, // 事务提交保证串行化
     pub(crate) seq_no: Arc<AtomicUsize>, // 全局事务序列号，全局递增
     pub(crate) merging_lock: Mutex<()>, // 防止多个线程同时 merge
@@ -109,7 +109,7 @@ impl Engine {
         let mut data_files = load_data_files(dir_path.clone(), opts.mmap_at_startup)?;
 
         // 设置 file id 信息
-        let mut file_ids: Vec<u32> = Vec::new();
+        let mut file_ids: Vec<u64> = Vec::new();
         for v in data_files.iter() {
             file_ids.push(v.get_file_id());
         }
@@ -382,7 +382,7 @@ impl Engine {
         Ok(LogRecordPos {
             file_id: active_file.get_file_id(),
             offset: write_off,
-            size: enc_record.len() as u32,
+            size: enc_record.len() as u64,
         })
     }
 
@@ -405,7 +405,7 @@ impl Engine {
             let megre_fin_record = megre_fin_file.read_log_record(0)?;
             let v = String::from_utf8(megre_fin_record.record.value).unwrap();
 
-            non_merge_fid = v.parse::<u32>().unwrap();
+            non_merge_fid = v.parse::<u64>().unwrap();
             has_merge = true;
         }
 
@@ -446,7 +446,7 @@ impl Engine {
                 let log_record_pos = LogRecordPos {
                     file_id: *file_id,
                     offset: offset,
-                    size: size as u32,
+                    size: size as u64,
                 };
 
                 // 解析 key，拿到实际的 key 和 seq no
@@ -614,7 +614,7 @@ fn load_data_files(dir_path: PathBuf, use_mmap_io: bool) -> Result<Vec<DataFile>
         return Err(Errors::FailedToReadDatabaseDir);
     }
 
-    let mut file_ids: Vec<u32> = Vec::new();
+    let mut file_ids: Vec<u64> = Vec::new();
     let mut data_files: Vec<DataFile> = Vec::new();
 
     for file in dir.unwrap() {
@@ -626,7 +626,7 @@ fn load_data_files(dir_path: PathBuf, use_mmap_io: bool) -> Result<Vec<DataFile>
             // 判断文件名称是不是以 .data 结尾
             if file_name.ends_with(DATA_FILE_NAME_SUFFIX) {
                 let split_names: Vec<&str> = file_name.split(".").collect();
-                let file_id = match split_names[0].parse::<u32>() {
+                let file_id = match split_names[0].parse::<u64>() {
                     Ok(fid) => fid,
                     Err(_) => {
                         return Err(Errors::DataDirCorrupted);

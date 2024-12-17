@@ -100,17 +100,17 @@ impl LogRecord {
 /// 数据位置索引信息，描述数据存储到了哪个位置
 #[derive(Clone, Copy)]
 pub struct LogRecordPos {
-    pub(crate) file_id: u32,
+    pub(crate) file_id: u64,
     pub(crate) offset: u64,
-    pub(crate) size: u32,
+    pub(crate) size: u64,
 }
 
 impl LogRecordPos {
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = BytesMut::new();
-        encode_varint(self.file_id as u64, &mut buf);
+        encode_varint(self.file_id, &mut buf);
         encode_varint(self.offset, &mut buf);
-        encode_varint(self.size as u64, &mut buf);
+        encode_varint(self.size, &mut buf);
         buf.to_vec()
     }
 }
@@ -136,9 +136,9 @@ pub fn decode_log_record_pos(pos: Vec<u8>) -> LogRecordPos {
     };
 
     LogRecordPos {
-        file_id: fid as u32,
+        file_id: fid ,
         offset: offset,
-        size: size as u32,
+        size: size,
     }
 }
 
